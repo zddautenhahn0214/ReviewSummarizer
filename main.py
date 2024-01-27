@@ -14,6 +14,18 @@ import re
 # print(inspect.getframeinfo(inspect.currentframe()).lineno)
 
 
+
+
+#define a few global variables
+#put your files paths to data here, have to be .gz files unless you change the code
+reviewDataFilePath = "review-Missouri.json.gz"
+metaDataFilePath = "meta-Missouri.json.gz"
+
+#list of keys in each json entry, change this if you have different keys
+reviewKeyList = ["gmap_id", "user_id", "name", "time", "rating", "text", "pics", "resp"]
+metaKeyList = ["name", "address", "gmap_id", "description", "latitude", "longitude", "category", "avg_rating", "num_of_reviews", "price", "hours", "MISC", "state", "relative_results", "url"]
+
+
 #get the meta data for some company based on search
 def findMetaData(path, search, key='name'):
     g = gzip.open(path, 'r')
@@ -130,7 +142,7 @@ def askGPT(reviewData):
 def metaSearch():
 
     #search for metadata
-    pathToMetaData = "meta-Missouri.json.gz"
+    pathToMetaData = metaDataFilePath
     search = "door sys"
     #serach key is 'name' by default
     key = ""
@@ -149,9 +161,9 @@ def metaSearch():
 
 def main():
     #normal review data path
-    pathToData = "review-Missouri.json.gz"
+    pathToData = reviewDataFilePath
     #review meta data path
-    pathToMetaData = "meta-Missouri.json.gz"
+    pathToMetaData = metaDataFilePath
     #if you want to look at a specific company list it's gmap_id here, else leave blank for all
     doorSystemsID = "0x87c11ff8ff703cb5:0x9ac3ae467ab58bd7"
     specific_gmap_id = "0x87c11ff8ff703cb5:0x9ac3ae467ab58bd7"
@@ -222,7 +234,7 @@ def main():
     
     # #get meta data for company id if specified
     # if specific_gmap_id:
-        # pathToData = "meta-Missouri.json.gz"
+        # pathToData = reviewDataFilePath
         # #if you want to look at a specific company list it's gmap_id here, else leave blank for all
         # specific_gmap_id = "0x87c0f1e8156a0aa7:0x6d2360d3b0f3846"
         # metaDataList = parse(pathToData, specific_gmap_id)
@@ -242,26 +254,76 @@ def main():
 
    
 def mainMenu():
-    # Define the window's contents
-    layout = [[sg.Text("What's your name?")],
-              [sg.Input(key='-INPUT-')],
-              [sg.Text(size=(40,1), key='-OUTPUT-')],
-              [sg.Button('Ok'), sg.Button('Quit')]]
+    # Define the layout of the window
+    layout = [
+        # Menu bar at the top
+        [sg.Menu([['File', ['Exit']]], tearoff=False)],
+        [
+            # Search bar, search key dropdown, and buttons on the left side
+            sg.Column([
+                [sg.Text('Data Search'), sg.Combo(['Meta Data', 'Review Data'], default_value='Meta Data', key='search_file', enable_events=True)],
+                [sg.Text('Search: '), sg.InputText(key='search_bar', focus=True), sg.Combo(metaKeyList, default_value=metaKeyList[0], key='search_key', enable_events=True)],
+                [sg.Text('Meta Data Results:')],
+                [sg.Multiline(size=(50, 20), key='meta_data')],
+                [sg.Button('Clear Search'), sg.Button('Get Reviews')]
+            ]),
+            # Multiline element to display reviews and summary on the right side
+            sg.Column([
+                #few blank lines for visual spacing
+                [sg.Text('')],
+                [sg.Text('')],
+                [sg.Text('Review Data Results:')],
+                [sg.Multiline(size=(50, 20), key='reviews_summary')],
+                [sg.Button('Prev'), sg.Button('Next'), sg.Button('Summarize')]
+            ])
+        ]
+    ]
 
-    # Create the window
+    # Create the window with the defined layout
     window = sg.Window('Review Summarizer', layout)
 
-    # Display and interact with the Window using an Event Loop
+    # Event loop to handle events and user inputs
     while True:
         event, values = window.read()
-        # See if user wants to quit or window was closed
-        if event == sg.WINDOW_CLOSED or event == 'Quit':
+        
+        if event == sg.WIN_CLOSED or event == 'Exit':
             break
-        # Output a message to the window
-        window['-OUTPUT-'].update('Hello ' + values['-INPUT-'] + "! Thanks for trying PySimpleGUI")
+            
+        elif event == 'search_file':
+            #swap the key vlaues from the drop down menue depending on which data set you are searching thorugh
+            if values['search_file'] == 'Meta Data':
+                window['search_key'].update(values=metaKeyList, set_to_index=0)
+            elif values['search_file'] == 'Review Data':
+                window['search_key'].update(values=reviewKeyList, set_to_index=0)
+            
+        elif event == 'search_key':
+            # When a new key is selected, update the reviews_summary field with the new key's text
+            window['reviews_summary'].update(values['search_key'])
+        
+        elif event == 'Clear Search':
+            # This is where the function to clear the search would be called
+            window['search_bar'].update('')       # Reset the search bar to default text
+            window['meta_data'].update('')        # Clear the meta data field
+            window['search_bar'].set_focus()      # Set focus back to the search bar
+   
+        elif event == 'Get Reviews':
+            # This is where the function to get reviews would be called
+            # window['-OUTPUT-'].update('Hello ' + values['-INPUT-'] + "! Thanks for trying PySimpleGUI")
+            pass
 
-    # Finish up by removing from the screen
+        elif event == 'Prev':
+            # This is where the function to go to the previous review would be called
+            pass
+        elif event == 'Next':
+            # This is where the function to go to the next review would be called
+            pass
+        elif event == 'Summarize':
+            # This is where the function to summarize the reviews would be called
+            pass
+
+    # Close the window
     window.close()
+
     
 
 if __name__ == '__main__':
