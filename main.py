@@ -41,8 +41,11 @@ def findMetaData(path, search, key='name'):
     #once the enough results have been found return
     #will count down after each result, so set number of results here
     resultLimit = 10
+    #counter to track number of lines checked so I can see the program didn't jsut crash
+    counter = 0
     #if no search specified return all results until limit
     for l in g:
+        counter = counter + 1
         #get name of comapny thne also remove extra chars for compaison
         companyName = json.loads(l)[key]
         #skip if no data in requested field
@@ -68,6 +71,10 @@ def findMetaData(path, search, key='name'):
                 resultsID.append(json.loads(l)["gmap_id"])
                 results.append(json.loads(l))
             
+        #print every 10,000 lines checked
+        if counter % 10000 == 0:
+            print("Checking records... ", counter, " records checked so far")
+        
         #leave loop once finished with this company
         if resultLimit < 0:
             break
@@ -75,13 +82,16 @@ def findMetaData(path, search, key='name'):
     
 
 #Data can be treated as python dictionary objects. A simple script to read any of the above the data is as follows:
-def parse(path, specific_gmap_id):
+def getReviewData(path, specific_gmap_id):
     g = gzip.open(path, 'r')
     #list to store reviews in to be returned at end
     reviews = []
+    #counter to track number of lines checked so I can see the program didn't jsut crash
+    counter = 0
     #once the company has been found and parsed, break the loop to save time
     found_gmap_id = False
     for l in g:
+        counter = counter + 1
         if specific_gmap_id:
             if json.loads(l)['gmap_id'] == specific_gmap_id:
                 # print(json.loads(l))
@@ -92,6 +102,11 @@ def parse(path, specific_gmap_id):
                 break
         else:
             reviews.append(json.loads(l))
+            
+        #print every 10,000 lines checked
+        if counter % 10000 == 0:
+            print("Checking records... ", counter, " records checked so far ", json.loads(l)['gmap_id'])
+            
     return reviews
 
 
@@ -138,14 +153,12 @@ def askGPT(reviewData):
     # print(completion.choices[0].message["content"])
     
 
-#function that calls the search function for metadata and also defines what to search fro and in what field
-def metaSearch():
+#function that calls the search function for metadata and also defines what to search for and in what field
+#default key and search to avoid breaking the code
+def metaSearch(key='name', search='door system'):
 
     #search for metadata
     pathToMetaData = metaDataFilePath
-    search = "door sys"
-    #serach key is 'name' by default
-    key = ""
     
     if key:
         results = findMetaData(pathToData, search, key)
@@ -263,18 +276,18 @@ def mainMenu():
             sg.Column([
                 [sg.Text('Data Search'), sg.Combo(['Meta Data', 'Review Data'], default_value='Meta Data', key='search_file', enable_events=True)],
                 [sg.Text('Search: '), sg.InputText(key='search_bar', focus=True), sg.Combo(metaKeyList, default_value=metaKeyList[0], key='search_key', enable_events=True)],
-                [sg.Text('Meta Data Results:')],
-                [sg.Multiline(size=(50, 20), key='meta_data')],
-                [sg.Button('Clear Search'), sg.Button('Get Reviews')]
+                [sg.Text('Meta Data Search Results:')],
+                [sg.Multiline(size=(50, 20), key='search_results')],
+                [sg.Button('Prev'), sg.Button('Next'), sg.VerticalSeparator(), sg.Button('Clear'), sg.Button('Search'), sg.VerticalSeparator(), sg.Text('Results: 0', key='meta_search_num')]
             ]),
             # Multiline element to display reviews and summary on the right side
             sg.Column([
                 #few blank lines for visual spacing
                 [sg.Text('')],
                 [sg.Text('')],
-                [sg.Text('Review Data Results:')],
-                [sg.Multiline(size=(50, 20), key='reviews_summary')],
-                [sg.Button('Prev'), sg.Button('Next'), sg.Button('Summarize')]
+                [sg.Text('Review Data & Summary:')],
+                [sg.Multiline(size=(50, 20), key='data_summary')],
+                [sg.Button('Get Reviews', key='get_reviews'), sg.Button('Summarize'), sg.VerticalSeparator(), sg.Text('Results: 0', key='review_search_num')]
             ])
         ]
     ]
@@ -294,22 +307,124 @@ def mainMenu():
             if values['search_file'] == 'Meta Data':
                 window['search_key'].update(values=metaKeyList, set_to_index=0)
             elif values['search_file'] == 'Review Data':
-                window['search_key'].update(values=reviewKeyList, set_to_index=0)
+                window['search_key'].update(values=["gmap_id"], set_to_index=0)
             
         elif event == 'search_key':
             # When a new key is selected, update the reviews_summary field with the new key's text
             window['reviews_summary'].update(values['search_key'])
         
-        elif event == 'Clear Search':
+        elif event == 'Clear':
             # This is where the function to clear the search would be called
             window['search_bar'].update('')       # Reset the search bar to default text
-            window['meta_data'].update('')        # Clear the meta data field
+            window['search_results'].update('')        # Clear the meta data field
+            window['meta_search_num'].update('Results: 0')   #reset displayed search results to zero
+            window['data_summary'].update('')        # Clear the review data field
+            window['review_search_num'].update('Results: 0')   #reset displayed review results to zero
             window['search_bar'].set_focus()      # Set focus back to the search bar
+            
    
-        elif event == 'Get Reviews':
-            # This is where the function to get reviews would be called
-            # window['-OUTPUT-'].update('Hello ' + values['-INPUT-'] + "! Thanks for trying PySimpleGUI")
-            pass
+        #define function for Search button
+        elif event == 'Search':
+            
+            #different search functions for different file types
+            if values['search_file'] == 'Meta Data':
+                #define needed vars
+                pathToData = metaDataFilePath
+                search = values['search_bar']
+                key = values['search_key']
+                #call the search function for meta data, requires path to file, search term, and key to search.
+                #returns a list of json objects
+                results = findMetaData(pathToData, search, key)
+                print(pathToData, search, key, len(results))
+                
+                #reformat data for display purposes
+                resultText = ""
+                for i in results:
+                    resultText = resultText + str(i) + '\n\n'
+                #display results to correct window
+                if resultText:
+                    window['search_results'].update(resultText)
+                else:
+                    window['search_results'].update("No results found")
+                
+                #update search results number
+                searchNumText = "Results: " + str(len(results))
+                window['meta_search_num'].update(searchNumText)
+                
+                
+            elif values['search_file'] == 'Review Data':
+                #define needed vars
+                pathToData = reviewDataFilePath
+                companyID = values['search_bar']
+                #get review data fro a specfic gmap_id
+                #returns a list of json objects
+                results = getReviewData(pathToData, companyID)
+                print(pathToData, companyID, len(results))
+                
+                #reformat data for display purposes
+                resultText = ""
+                for i in results:
+                    resultText = resultText + str(i) + '\n\n'
+                #display results to correct window
+                if resultText:
+                    window['data_summary'].update(resultText)
+                else:
+                    window['data_summary'].update("No results found")
+                
+                #update search results number 
+                searchNumText = "Results: " + str(len(results))
+                window['review_search_num'].update(searchNumText)
+                
+                
+            
+        
+        #get all the reviews for a specific gmap_id that have text
+        elif event == 'get_reviews':   
+            #define needed vars
+            pathToData = reviewDataFilePath
+            companyID = values['search_bar']
+            #make sure there is something in there at least
+            if companyID:
+                # 0x87d8b617445d26e5:0x6e90d4b95168452e
+                # 0x87c0e2ecff959bc9:0x7d916d9e85d2ed84
+                # 0x87df2e32e108cc51:0xa5a4b329ef1fb75d 
+                # 0x87df2e44fffdd56d:0x72c2d0894eab822a 
+                # 0x87df2d5d987ab84b:0x1c7a333dd30d670f 
+                # 0x87d8cb3b67b275a7:0x13d3b7087c062d4
+                #validate gmap_id to make sure it fits format
+                #strip chars other than numbers, letters, and ':'
+                companyID = re.sub(r'[^a-zA-Z0-9:]', '', companyID)
+                companyID = re.sub(r'^.*?0x', '0x', companyID)
+                #remove everything in front of '0x' if there
+                companyID
+                #all gmap_ids start with "0x[16 chars]:[the rest]"
+                #so must be minimum of 19 chars long
+                if len(companyID) < 19:
+                    window['data_summary'].update("Error: Invalid gmap_id, too short")
+                else:
+                    if companyID[:2] != "0x" or companyID[18] != ':':
+                        window['data_summary'].update("Error: Invalid gmap_id")
+                        
+                    else:
+                        #get review data fro a specfic gmap_id
+                        #returns a list of json objects
+                        print(pathToData, companyID)
+                        results = getReviewData(pathToData, companyID)
+                        print(pathToData, companyID, len(results))
+                        
+                        #reformat data for display purposes
+                        resultText = ""
+                        for i in results:
+                            resultText = resultText + str(i) + '\n\n'
+                        #display results to correct window
+                        window['data_summary'].update(resultText)
+                        
+                        #update search results number
+                        searchNumText = "Results: " + str(len(results))
+                        window['review_search_num'].update(searchNumText)
+                
+            else:
+                window['data_summary'].update("Error: No gmap_id")
 
         elif event == 'Prev':
             # This is where the function to go to the previous review would be called
