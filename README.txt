@@ -78,3 +78,7 @@ The end goal is to get a technology that would allow citizens to give feedback t
 If we applied this program to synthasizing citizen complaints/feedback, or really just feedback in general no need to limit it to just government, then it would be good to do multiple passes/varitents probably. One to get a general feel for things and the most common issues, one to get the outliers and extremes, and one to target overlooked minority but still improtant issues/feedback.
 
 Might be the case that we will need to further define for the AI what we classify as 'important' when it reads through the feedback data. Probably would need to even be updated over time too therotically.
+
+
+
+right now the pagination is super simple 'cause it works i guess' janky set up. Every time you paginate it will re search through the whole files but it knows to skip the firs x results it finds. It would be better to find all the results first, then smoothly paginate through those results. Or even better actually make and interface a real database for the searches rather than just looping through a simple python list. But this works with the files size I'm using so for now it's good enough.
