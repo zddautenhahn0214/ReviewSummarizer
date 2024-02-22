@@ -5,15 +5,11 @@
 
 import gzip  
 import json
+import ast
 import PySimpleGUI as sg
 from openai import OpenAI
 import os
 import re
-
-# import inspect
-# print(inspect.getframeinfo(inspect.currentframe()).lineno)
-
-
 
 
 #define a few global variables
@@ -22,11 +18,13 @@ reviewDataFilePath = "review-Missouri.json.gz"
 metaDataFilePath = "meta-Missouri.json.gz"
 
 #list of keys in each json entry, change this if you have different keys
-reviewKeyList = ["gmap_id", "user_id", "name", "time", "rating", "text", "pics", "resp"]
 metaKeyList = ["name", "address", "gmap_id", "description", "latitude", "longitude", "category", "avg_rating", "num_of_reviews", "price", "hours", "MISC", "state", "relative_results", "url"]
 
-#limit on the number of results displayed at one time
+#limit on the number of meta search results displayed at one time
 resultLimit = 20
+#limit the number of total chracters returned from the reviews 
+#since there is a token limit on what can be sent to the gpt model
+reviewCharLimit = 8192
 
 
 #currently loading the file every search and searching through entire file each pagination
@@ -46,9 +44,7 @@ def findMetaData(path, search, key='name', pageNum=0):
     if not (key in line):
         print(key, ' is not valid key and is not in first line\n')
         return []
-   
         
-
     
     #first strip chars othre than aA-zZ
     searchDetail = re.sub('[\W_]+', '', search)
@@ -77,7 +73,6 @@ def findMetaData(path, search, key='name', pageNum=0):
         #if no search term specified return all results
         if searchDetail:
             if searchDetail in companyDetail:
-                # print(json.loads(l))
                 #only add if not a duplicate
                 if json.loads(l)["gmap_id"] not in resultsID:
                     #return once resultLimit reached
@@ -95,7 +90,7 @@ def findMetaData(path, search, key='name', pageNum=0):
             
         #print every 10,000 lines checked
         if counter % 10000 == 0:
-            print("Checking records... ", counter, " records checked so far")
+            print("Checking meta records... ", counter, " records checked so far")
         
         #leave loop once result limit is hit
         if len(results) >= resultLimit:
@@ -104,195 +99,109 @@ def findMetaData(path, search, key='name', pageNum=0):
     
 
 #Data can be treated as python dictionary objects. A simple script to read any of the above the data is as follows:
-def getReviewData(path, specific_gmap_id):
+def getReviewData(path, specific_gmap_id, reviewsToSkip=0):
     g = gzip.open(path, 'r')
     #list to store reviews in to be returned at end
     reviews = []
-    #counter to track number of lines checked so I can see the program didn't jsut crash
+    #counter to track number of lines checked so I can see the program didn't just crash
     counter = 0
+    #track the number of characters in the text field of the review, since that is what will be sent to the AI.
+    charTextCount = 0
     #once the company has been found and parsed, break the loop to save time
     found_gmap_id = False
+    #bool to check if more reviews exist, for pagiantion purposes
+    nextReviewExists = False
     for l in g:
         counter = counter + 1
         if specific_gmap_id:
-            if json.loads(l)['gmap_id'] == specific_gmap_id:
-                # print(json.loads(l))
-                found_gmap_id = True
-                reviews.append(json.loads(l))
+            currentRecord = json.loads(l)
+            if currentRecord['gmap_id'] == specific_gmap_id:
+                #for now only return reviews that contain text data, may add a toggle to see all later
+                if currentRecord['text']:
+                    #only add after skipping to correct result number
+                    if reviewsToSkip > 0:
+                        reviewsToSkip = reviewsToSkip - 1
+                    else:
+                        #first check that adding this record wont exceed the char limit, if so then exit loop
+                        if (charTextCount + len(str(currentRecord['text'])) + 6) >= reviewCharLimit:
+                            nextReviewExists = True
+                            break
+                        #count number of chars in review text. Also add 6 for the "{}, \n\n" that will be added
+                        charTextCount = charTextCount + len(str(currentRecord['text'])) + 6
+                        # print(json.loads(l))
+                        found_gmap_id = True
+                        reviews.append(currentRecord)
             #leave loop once finished with this company
             elif found_gmap_id:
                 break
-        else:
-            reviews.append(json.loads(l))
             
         #print every 10,000 lines checked
         if counter % 10000 == 0:
-            print("Checking records... ", counter, " records checked so far ", json.loads(l)['gmap_id'])
+            pass
+            print("Checking review records... ", counter, " records checked so far ")
             
-    return reviews
+            
+    return reviews, counter, charTextCount, nextReviewExists
 
 
 #testing some openAI API function calls   
-def askGPT(reviewData):
+def askGPT(reviewData, titleText):
     
     client = OpenAI()
     
     # reviewData = ""
+    #this is a bool toggle for letting me test the UI without needing to constanttly spend money calling the GPT API
+    #True False
+    testUI = True
+    completion = ''
+    completionText = ''
     
     #instructions given to gpt 
     systemInstructions = "Read the provided reviews. List as bullet points, Then list the issues that would be the highest priority to investigate and fix, and finally provide what the average person would rate the entity on a scale of 1-5 given the reviews. We have to determine what the most common complaints and praises are in these reviews. What information should the average person take from these reviews that they could responsibly share with others without giving a warped view? Lets work this out step by step"
 
-    print("systemInstructions: ", systemInstructions)
-    print()
-    # print("reviewData: ", reviewData)
     
-    
-    #consider messing with temperature:  number(between 0 and 1.)   Optional Defaults to 0 
-    #"If set to 0, the model will use log probability to automatically increase the temperature until certain thresholds are hit."
-    completion = client.chat.completions.create(
-      model="gpt-3.5-turbo-1106",
-      messages=[
-        {"role": "system", "content": systemInstructions},
-        {"role": "user", "content": reviewData}
-      ]
-    )
-    
-    print(completion)
-    print()
-    print(completion.choices[0].message.content)
-    
-    completionText = str(completion.choices[0].message.content)
-    completion = str(completion)
-    with open("completionRaw.txt", "a") as outfile:
-        outfile.write(completion)
-        outfile.write("\n")
-        outfile.write("\n")
+    #don't call api if testing UI
+    if testUI:   
+        #output exactly what would be sent to gpt
+        completionText = reviewData
         
-    with open("completion.txt", "a") as outfile:
-        outfile.write(completionText)
-        outfile.write("\n")
-        outfile.write("\n")
-        
-    # this didnt work
-    # print(completion.choices[0].message["content"])
-    
-
-#function that calls the search function for metadata and also defines what to search for and in what field
-#default key and search to avoid breaking the code
-def metaSearch(key='name', search='door system'):
-
-    #search for metadata
-    pathToMetaData = metaDataFilePath
-    
-    if key:
-        results = findMetaData(pathToData, search, key)
-        for i in results:
-            print(i['name'], i['gmap_id'], i[key])
-            print()
     else:
-        results = findMetaData(pathToData, search)
-        for i in results:
-            print(i['name'], i['gmap_id'])
-            print()
+        #consider messing with temperature:  number(between 0 and 1.)   Optional Defaults to 0 
+        #"If set to 0, the model will use log probability to automatically increase the temperature until certain thresholds are hit."
+        completion = client.chat.completions.create(
+          model="gpt-3.5-turbo-1106",
+          messages=[
+            {"role": "system", "content": systemInstructions},
+            {"role": "user", "content": reviewData}
+          ]
+        )
+        
+    
+    #only do run this when not testing the UI
+    if not testUI:
+        
+        completionText = str(completion.choices[0].message.content)
+        completion = str(completion)
+        with open("completionRaw.txt", "a") as outfile:
+            outfile.write(completion)
+            outfile.write("\n")
+            outfile.write("\n")
+            
+        with open("completion.txt", "a") as outfile:
+            outfile.write(titleText)
+            outfile.write(completionText)
+            outfile.write("\n")
+            outfile.write("\n")
+        
+    
+    return completionText
             
 
+   
 def main():
-    #normal review data path
-    pathToData = reviewDataFilePath
-    #review meta data path
-    pathToMetaData = metaDataFilePath
-    #if you want to look at a specific company list it's gmap_id here, else leave blank for all
-    doorSystemsID = "0x87c11ff8ff703cb5:0x9ac3ae467ab58bd7"
-    specific_gmap_id = "0x87c11ff8ff703cb5:0x9ac3ae467ab58bd7"
-    specific_gmap_id = doorSystemsID
-    
-    #limit the number of characters in each batch of reviews
-    #if adding the next review would exceed this limit pause and continue then start over where left off.
-    reviewCharLimit = 8192
-   
-    dataList = parse(pathToData, specific_gmap_id)
-    
-    # print(dataList)
-    dataObjLen = len(dataList)
-    print("dataObjLen: ", dataObjLen)
-    
-    #just get the review's text data to send to gpt.
-    reviewText = ""
-    
-    #count number of reviews with text
-    count = 0
-    reviewCharCount = 0
-    #loop through data
-    for review in dataList:
-        # print(review)
-        #only print reviews with text
-        print(review['time'])
-        if review['text']:
-            # print(review['text'])
-            # print()
-            #clean review data and make each review seperate and obviously distinct.
-            text = review['text']
-            
-            #remove characters that cant be encoded with ascii
-            text = ascii(text)
-            #remove {} from review to ensure no issues
-            text = text.replace('{', '')
-            text = text.replace('}', '')
-            
-            #check if the next review will exceed the limit(also add + for chacters being manually added)
-            if (reviewCharCount + len(text) + 6) > reviewCharLimit:
-                break
-            reviewText = reviewText + "{" + text + "}, " + '\n\n'
-            reviewCharCount = len(reviewText)
-            
-            count = count + 1
-    
-    print()
-    
-    #get meta data for same company id
-    metaResults = findMetaData(pathToMetaData, specific_gmap_id, 'gmap_id')
-    if len(metaResults) == 1:
-        print('name:', metaResults[0]['name'])
-        print('avg_rating: ', metaResults[0]['avg_rating'])
-        print('num_of_reviews: ', metaResults[0]['num_of_reviews'])
-        print('num of reviews with text: ', count)
-    else:
-        print(metaResults)
-        print(len(metaResults))
-    
-    
-    
-    #send review text data to json and save it to file for me to look over 
-    # reviewText = json.dumps(reviewText)
-    # Writing to reviewText.json
-    with open("reviewText.txt", "w") as outfile:
-        outfile.write(reviewText)
-        
-    
-    # #get meta data for company id if specified
-    # if specific_gmap_id:
-        # pathToData = reviewDataFilePath
-        # #if you want to look at a specific company list it's gmap_id here, else leave blank for all
-        # specific_gmap_id = "0x87c0f1e8156a0aa7:0x6d2360d3b0f3846"
-        # metaDataList = parse(pathToData, specific_gmap_id)
-        # #should return one
-        # if len(metaDataList) == 1:
-            # print('name:', metaDataList[0]['name'])
-            # print('avg_rating: ', metaDataList[0]['avg_rating'])
-            # print('num_of_reviews: ', metaDataList[0]['num_of_reviews'])
-            # print('num of reviews with text: ', count)
-        # else:
-            # print(metaDataList)
-            # print(len(metaDataList))
-        
-    
-    # print("reviewData: ", reviewText)
-    # askGPT(reviewText)
-
-   
-def mainMenu():
+    #layout vairables
     #vairable to change summzry data title length, if want to change later since it gets used for some math
-    reviewTitleLength = 40
+    reviewTitleLength = 46
     # Define the layout of the window
     layout = [
         # Menu bar at the top
@@ -302,16 +211,27 @@ def mainMenu():
             sg.Column([
                 [sg.Text('Search: '), sg.InputText(key='search_bar', focus=True), sg.Combo(metaKeyList, default_value=metaKeyList[0], key='search_key', enable_events=True)],
                 [sg.Text('Meta Data Search Results:')],
-                [sg.Listbox(values=[], size=(30, 19), key='list_box_search_results', enable_events=True), sg.Multiline(size=(40, 20), key='search_results')],
-                [sg.Button('Prev'), sg.Button('Next'), sg.Text('Page Num: 0', key='meta_page_num'), sg.VerticalSeparator(), sg.Button('Clear'), sg.Button('Search'), sg.VerticalSeparator(), sg.Text('Results: 0', key='meta_search_num')]
+                [sg.Listbox(values=[], size=(30, 19), key='list_box_search_results', enable_events=True), sg.Multiline(size=(40, 20), disabled=True, key='search_results')],
+                [sg.Button('Prev', key='Prev'), sg.Button('Next', key='Next'), sg.Text('Page Num: ', key='meta_page_num'), sg.VerticalSeparator(), sg.Button('Clear'), sg.Button('Search'), sg.VerticalSeparator(), sg.Text('Results: 0', key='meta_search_num')]
             ]),
-            # Multiline element to display reviews and summary on the right side
+            #spacer col in middle
+             sg.Column([
+                [sg.Text('', size=(10,28))]
+             ]),
+             
             sg.Column([
                 #few blank lines for visual spacing
                 [sg.Text('')],
-                [sg.Text('Review Data & Summary:', key='review_data_title', size=(reviewTitleLength,1))],
-                [sg.Multiline(size=(50, 20), key='data_summary')],
-                [sg.Button('Get Reviews', key='get_reviews'), sg.Button('Summarize'), sg.VerticalSeparator(), sg.Text('Results: 0', key='review_search_num')]
+                [sg.Text('Review Data:', key='review_data_title', size=(reviewTitleLength,1)), sg.Text('Review Summary:', key='summary_title', size=(reviewTitleLength,1))],
+                [sg.Multiline(size=(50, 20), disabled=True, key='review_results'), sg.Multiline(size=(40, 20), disabled=True, key='data_summary')],
+                [sg.Button('Prev', key='prev_review'), sg.Button('Next', key='next_review'), 
+                    sg.Text('', size=(5,1)),
+                    sg.Button('Get Reviews', key='get_reviews'), 
+                    sg.Text('', size=(28,1)),
+                    sg.Button('Summarize', key='Summarize')],
+                [sg.Text('Total Reviews: 0', key='total_review_num'), sg.VerticalSeparator(), 
+                    sg.Text('Results: 0', key='review_results_num'), sg.VerticalSeparator(),
+                    sg.Text('Text Char Count: 0', key='review_char_num')]
             ])
         ]
     ]
@@ -322,6 +242,13 @@ def mainMenu():
     search = ''
     key = ''
     pageNum = 0
+    totalReviewNum = 0
+    #save the last counter when searching for reviews to try and speed up the search a bit
+    reviewCount = 0
+    #bool to track if there is another review to be looked at for apgination purposes
+    nextReviewExists = False
+    #list of review counts since number of results is vairable depending on text length
+    lastReviewCount = []
 
     # Event loop to handle events and user inputs
     while True:
@@ -355,25 +282,38 @@ def mainMenu():
             pass
         
         elif event == 'Clear':
-            # This is where the function to clear the search would be called
+            # Clear and reset vairable and UI fields 
+            pageNum = 0
+            totalReviewNum = 0
+            nextReviewExists = False
+            window['meta_page_num'].update('Page Num: ')        # reset the search page number
+            window['total_review_num'].update('Total Reviews: 0')        # reset the review page number
+            window['meta_search_num'].update('Results: 0')   #reset displayed search results to zero
+            window['review_data_title'].update('Review Data:')        # reset the reviews title
+            window['summary_title'].update('Review Summary:')        # reset the summary title
             window['search_bar'].update('')       # Reset the search bar to default text
             window['list_box_search_results'].update('')   #clear out listbox serch results
             window['search_results'].update('')        # Clear the meta data field
-            window['meta_search_num'].update('Results: 0')   #reset displayed search results to zero
-            window['data_summary'].update('')        # Clear the review data field
-            window['review_search_num'].update('Results: 0')   #reset displayed review results to zero
+            window['data_summary'].update('')        # Clear the data summary field
+            window['review_results'].update('')        # Clear the review data field
+            window['review_results_num'].update('Results: 0')   #reset displayed review results to zero
             window['search_bar'].set_focus()      # Set focus back to the search bar
+            window['review_char_num'].update("Text Char Count: 0")
             
    
         #define function for Search button, searching meta data
         elif event == 'Search':
             
             #clear some text when starting a new search
+            pageNum = 0
+            totalReviewNum = 0
+            window['meta_page_num'].update('Page Num: ')        # reset the search page number
+            window['total_review_num'].update('Total Reviews: 0')        # reset the review page number
             window['list_box_search_results'].update('')   #clear out listbox serch results
             window['search_results'].update('')        # Clear the meta data field
             window['meta_search_num'].update('Results: 0')   #reset displayed search results to zero
             # window['data_summary'].update('')        # Clear the review data field
-            # window['review_search_num'].update('Results: 0')   #reset displayed review results to zero
+            # window['review_results_num'].update('Results: 0')   #reset displayed review results to zero
             
             
             #call search function to find meta data based on user search parameters
@@ -392,67 +332,6 @@ def mainMenu():
             window['meta_search_num'].update(searchNumText)
             
             
-            
-        
-        #get all the reviews for a specific gmap_id that have text
-        elif event == 'get_reviews':   
-            #define needed vars
-            pathToData = reviewDataFilePath
-            #get companyID from current selected meta data result
-            companyID = values['list_box_search_results'][0]
-            if companyID:
-                companyID = companyID['gmap_id']
-            
-            #make sure there is something in there at least
-            if companyID:
-                #validate gmap_id to make sure it fits format
-                #strip chars other than numbers, letters, and ':'
-                companyID = re.sub(r'[^a-zA-Z0-9:]', '', companyID)
-                companyID = re.sub(r'^.*?0x', '0x', companyID)
-                #remove everything in front of '0x' if there
-                companyID
-                #all gmap_ids start with "0x[16 chars]:[the rest]"
-                #so must be minimum of 19 chars long
-                if len(companyID) < 19:
-                    window['data_summary'].update("Error: Invalid gmap_id, too short")
-                else:
-                    if companyID[:2] != "0x" or companyID[18] != ':':
-                        window['data_summary'].update("Error: Invalid gmap_id")
-                        
-                    else:
-                        #get review data fro a specfic gmap_id
-                        #returns a list of json objects
-                        print(pathToData, companyID)
-                        results = getReviewData(pathToData, companyID)
-                        print(pathToData, companyID, len(results))
-                        
-                        #reformat data for display purposes
-                        resultText = ""
-                        for i in results:
-                            resultText = resultText + str(i) + '\n\n'
-                        #display results to correct window
-                        window['data_summary'].update(resultText)
-                        
-                        #update search results number
-                        searchNumText = "Results: " + str(len(results))
-                        window['review_search_num'].update(searchNumText)
-                        
-                        #change window title
-                        #if error just display standard title text, but flipped so I know there was an error
-                        try:
-                            companyName = values['list_box_search_results'][0]['name']
-                            titleText = "Reviews for " + companyName + ':'
-                            #truncate if length of title exceeds reviewTitleLength
-                            if len(titleText) >= reviewTitleLength:
-                                titleText = titleText[:reviewTitleLength-3] + '...'
-                            window['review_data_title'].update(titleText)
-                        except:
-                            window['review_data_title'].update("Review Summary & Data")
-                            
-                
-            else:
-                window['data_summary'].update("Error: No gmap_id")
-
         elif event == 'Prev':
             #dont go backwards if first page
             if pageNum > 0:
@@ -462,7 +341,7 @@ def mainMenu():
                 window['search_results'].update('')        # Clear the meta data field
                 window['meta_search_num'].update('Results: 0')   #reset displayed search results to zero
                 # window['data_summary'].update('')        # Clear the review data field
-                # window['review_search_num'].update('Results: 0')   #reset displayed review results to zero
+                # window['review_results_num'].update('Results: 0')   #reset displayed review results to zero
                 
                 
                 #call search function to find meta data based on user search parameters
@@ -496,7 +375,7 @@ def mainMenu():
                 window['search_results'].update('')        # Clear the meta data field
                 window['meta_search_num'].update('Results: 0')   #reset displayed search results to zero
                 # window['data_summary'].update('')        # Clear the review data field
-                # window['review_search_num'].update('Results: 0')   #reset displayed review results to zero
+                # window['review_results_num'].update('Results: 0')   #reset displayed review results to zero
                 
                 
                 #call search function to find meta data based on user search parameters
@@ -520,9 +399,314 @@ def mainMenu():
                 searchPageNumText = "Page Num: " + str(pageNum+1)
                 window['meta_page_num'].update(searchPageNumText)
             
+        
+        
+        #get all the reviews for a specific gmap_id that have text
+        elif event == 'get_reviews':   
+            #reset total reviews shown number
+            totalReviewNum = 0
+            window['total_review_num'].update('Total Reviews: 0')        # reset the total review number
+            
+            #define needed vars
+            pathToData = reviewDataFilePath
+            #get companyID from current selected meta data result
+            companyID = ''
+            #handle error, if wont work jsut do nothing
+            try:
+                companyID = values['list_box_search_results'][0]
+                if companyID:
+                    companyID = companyID['gmap_id']
+            except:
+                companyID = ''
+            
+            #make sure there is something in there at least
+            if companyID:
+                #validate gmap_id to make sure it fits format
+                #strip chars other than numbers, letters, and ':'
+                companyID = re.sub(r'[^a-zA-Z0-9:]', '', companyID)
+                companyID = re.sub(r'^.*?0x', '0x', companyID)
+                # #remove everything in front of '0x' if there
+                # companyID
+                #all gmap_ids start with "0x[16 chars]:[the rest]"
+                #so must be minimum of 19 chars long
+                if len(companyID) < 19:
+                    window['review_results'].update("Error: Invalid gmap_id, too short")
+                else:
+                    if companyID[:2] != "0x" or companyID[18] != ':':
+                        window['review_results'].update("Error: Invalid gmap_id")
+                        
+                    else:
+                        #get review data for a specfic gmap_id
+                        #returns a list of json objects and the last count
+                        results, reviewCount, charCount, nextReviewExists = getReviewData(pathToData, companyID)
+                        # print(pathToData, companyID, len(results), '  reviewCount: ', reviewCount, '  charCount: ', charCount, 'nextReviewExists: ', nextReviewExists)
+                        
+                        
+                        #reformat data for display purposes
+                        resultText = ""
+                        for i in results:
+                            resultText = resultText + str(i) + '\n\n'
+                        #display results to correct window
+                        window['review_results'].update(resultText)
+                        
+                        #update the total number of results Shown
+                        totalReviewNum = len(results)
+                        totalReviewNumText = "Total Reviews: " + str(totalReviewNum)
+                        window['total_review_num'].update(totalReviewNumText)  
+                        
+                        #update search results number
+                        searchNumText = "Results: " + str(len(results))
+                        window['review_results_num'].update(searchNumText)
+                        
+                        #update search results number
+                        charNumText = "Text Char Count: " + str(charCount)
+                        window['review_char_num'].update(charNumText)
+                        
+                        
+                        #change window title
+                        #if error just display standard title text, but flipped so I know there was an error
+                        try:
+                            companyName = values['list_box_search_results'][0]['name']
+                            titleText = "Reviews for " + companyName + ':\n'
+                            #truncate if length of title exceeds reviewTitleLength
+                            if len(titleText) >= reviewTitleLength:
+                                titleText = titleText[:reviewTitleLength-3] + '...'
+                            window['review_data_title'].update(titleText)
+                        except:
+                            window['review_data_title'].update("Review Summary & Data")
+                            
+                        
+                
+            else:
+                window['review_results'].update("Error: No gmap_id")
+
+            
+        
         elif event == 'Summarize':
             # This is where the function to summarize the reviews would be called
-            pass
+            reviews = values['review_results']
+            #if no reviews do nothing
+            if reviews and reviews != "Error: No gmap_id":
+                reviews = reviews.split('\n\n')
+                
+                #get just the text in each review to pass to AI for summary
+                #count number of reviews with text
+                count = 0
+                reviewCharCount = 0
+                #just get the review's text data to send to gpt.
+                reviewText = ""
+                textReviews = []
+                for i in reviews:
+                    #get just the text from the review json object
+                    text = ast.literal_eval(i)['text']
+                    
+                    #remove characters that cant be encoded with ascii
+                    # text = ascii(text)
+                    
+                    #check if the next review will exceed the limit(also add 6 for chacters being manually added)
+                    if (reviewCharCount + len(text) + 6) > reviewCharLimit:
+                        break
+                    reviewText = reviewText + "{" + text + "}, " + '\n\n'
+                    reviewCharCount = len(reviewText)
+                    
+                    count = count + 1
+                
+                
+                #change title to reflect this is now the summary of the reviews review_results_num
+                titleText = window['review_data_title'].get()
+                titleText = titleText.replace('Reviews', 'Summary')
+                
+                summaryResults = askGPT(reviewText, titleText)
+                
+                
+                #change title now
+                window['summary_title'].update(titleText)
+                
+                window['data_summary'].update(summaryResults)
+                
+                
+                
+        elif event == 'prev_review':
+            #dont go backwards if first set of reviews
+            currentResultNum = int(window['review_results_num'].get().split()[-1])
+            if (totalReviewNum - currentResultNum) > 0:
+                #update total review num
+                totalReviewNum = totalReviewNum - currentResultNum
+               
+                
+                #define needed vars
+                pathToData = reviewDataFilePath
+                companyID = values['review_results']
+                #find first gmap_id, all ids will be the same since reviews come from the same company
+                idIndex = companyID.find("gmap_id': '0")
+                #if gmap_id is found then continue
+                if idIndex != -1:
+                    companyID = companyID[idIndex-1:companyID.find('}',idIndex)]
+                    if companyID:
+                        companyID = companyID[:-1]
+                        
+                        
+                    
+                    #make sure there is something in there at least
+                    if companyID:
+                        #validate gmap_id to make sure it fits format
+                        #strip chars other than numbers, letters, and ':'
+                        companyID = re.sub(r'[^a-zA-Z0-9:]', '', companyID)
+                        companyID = re.sub(r'^.*?0x', '0x', companyID)
+                        #all gmap_ids start with "0x[16 chars]:[the rest]"
+                        #so must be minimum of 19 chars long
+                        if len(companyID) < 19:
+                            window['review_results'].update("Error: Invalid gmap_id, too short")
+                        else:
+                            if companyID[:2] != "0x" or companyID[18] != ':':
+                                window['review_results'].update("Error: Invalid gmap_id")
+                                
+                            else:
+                            
+                                #update some text when paginating
+                                window['review_results'].update('')   #clear out review results in prep to get new reults
+                                totalReviewNumText = 'Total Reviews: ' + str(totalReviewNum)
+                                window['total_review_num'].update(totalReviewNumText)   #reset displayed page number
+                                window['review_results_num'].update('Results: 0')   #reset displayed number of results, since number shown depends on the char count in the reviews shown
+                    
+                                #get review data for a specfic gmap_id
+                                #returns a list of json objects and the last count
+                                temp = lastReviewCount.pop()
+                                reviewsToSkip = totalReviewNum-temp
+                                #set to 0 if go negative
+                                if reviewsToSkip < 0:
+                                    reviewsToSkip = 0
+                                    
+                                results, reviewCount, charCount, nextReviewExists = getReviewData(pathToData, companyID, reviewsToSkip)
+                                
+                                
+                                
+                                #reformat data for display purposes
+                                resultText = ""
+                                for i in results:
+                                    resultText = resultText + str(i) + '\n\n'
+                                #display results to correct window
+                                window['review_results'].update(resultText)
+                                
+                                #update the total number of results Shown
+                                totalReviewNumText = "Total Reviews: " + str(totalReviewNum)
+                                window['total_review_num'].update(totalReviewNumText)  
+                                
+                                #update search results number
+                                searchNumText = "Results: " + str(len(results))
+                                window['review_results_num'].update(searchNumText)
+                                
+                                #update search results number
+                                charNumText = "Text Char Count: " + str(charCount)
+                                window['review_char_num'].update(charNumText)
+                                
+                                
+                                #change window title
+                                #if error just display standard title text, but flipped so I know there was an error
+                                try:
+                                    companyName = values['list_box_search_results'][0]['name']
+                                    titleText = "Reviews for " + companyName + ':'
+                                    #truncate if length of title exceeds reviewTitleLength
+                                    if len(titleText) >= reviewTitleLength:
+                                        titleText = titleText[:reviewTitleLength-3] + '...'
+                                    window['review_data_title'].update(titleText)
+                                except:
+                                    window['review_data_title'].update("Review Summary & Data")
+                                    
+                                                            
+                    else:
+                        window['review_results'].update("Error: No gmap_id")
+                    
+                
+                
+        elif event == 'next_review':
+            #if there is another review to look at
+            currentResultNum = int(window['review_results_num'].get().split()[-1])
+            if nextReviewExists:
+                #define needed vars
+                pathToData = reviewDataFilePath
+                companyID = values['review_results']
+                #find first gmap_id, all ids will be the same since reviews come from the same company
+                idIndex = companyID.find("gmap_id': '0")
+                #if gmap_id is found then continue
+                if idIndex != -1:
+                    companyID = companyID[idIndex-1:companyID.find('}',idIndex)]
+                    if companyID:
+                        companyID = companyID[:-1]
+                        
+                        
+                    
+                    #make sure there is something in there at least
+                    if companyID:
+                        #validate gmap_id to make sure it fits format
+                        #strip chars other than numbers, letters, and ':'
+                        companyID = re.sub(r'[^a-zA-Z0-9:]', '', companyID)
+                        companyID = re.sub(r'^.*?0x', '0x', companyID)
+                        #all gmap_ids start with "0x[16 chars]:[the rest]"
+                        #so must be minimum of 19 chars long
+                        if len(companyID) < 19:
+                            window['review_results'].update("Error: Invalid gmap_id, too short")
+                        else:
+                            if companyID[:2] != "0x" or companyID[18] != ':':
+                                window['review_results'].update("Error: Invalid gmap_id")
+                                
+                            else:
+                            
+                                #update some text when paginating
+                                window['review_results'].update('')   #clear out review results in prep to get new reults
+                                totalReviewNumText = 'Total Reviews: ' + str(totalReviewNum)
+                                window['total_review_num'].update(totalReviewNumText)   #reset displayed page number
+                                window['review_results_num'].update('Results: 0')   #reset displayed number of results, since number shown depends on the char count in the reviews shown
+                                
+                                #save the last result count to know how far pack to paginate
+                                lastReviewCount.append(currentResultNum)
+                    
+                                #get review data for a specfic gmap_id
+                                #returns a list of json objects and the last count
+                                reviewsToSkip = totalReviewNum
+                                results, reviewCount, charCount, nextReviewExists = getReviewData(pathToData, companyID, reviewsToSkip)
+                                
+                                
+                                
+                                #reformat data for display purposes
+                                resultText = ""
+                                for i in results:
+                                    resultText = resultText + str(i) + '\n\n'
+                                #display results to correct window
+                                window['review_results'].update(resultText)
+                                
+                                #update the total number of results Shown
+                                totalReviewNum = totalReviewNum + len(results)
+                                totalReviewNumText = "Total Reviews: " + str(totalReviewNum)
+                                window['total_review_num'].update(totalReviewNumText)  
+                                
+                                #update search results number
+                                searchNumText = "Results: " + str(len(results))
+                                window['review_results_num'].update(searchNumText)
+                                
+                                #update search results number
+                                charNumText = "Text Char Count: " + str(charCount)
+                                window['review_char_num'].update(charNumText)
+                                
+                                
+                                #change window title
+                                #if error just display standard title text, but flipped so I know there was an error
+                                try:
+                                    companyName = values['list_box_search_results'][0]['name']
+                                    titleText = "Reviews for " + companyName + ':'
+                                    #truncate if length of title exceeds reviewTitleLength
+                                    if len(titleText) >= reviewTitleLength:
+                                        titleText = titleText[:reviewTitleLength-3] + '...'
+                                    window['review_data_title'].update(titleText)
+                                except:
+                                    window['review_data_title'].update("Review Summary & Data")
+                                    
+                                    
+                                    
+                        
+                    else:
+                        window['review_results'].update("Error: No gmap_id")
+            
 
     # Close the window
     window.close()
@@ -530,15 +714,8 @@ def mainMenu():
     
 
 if __name__ == '__main__':
-    reviewData = ""
     
-    # askGPT(reviewData)
-    
-    # main()
-    
-    # metaSearch()
-    
-    mainMenu()
+    main()
     
     
     

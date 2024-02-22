@@ -1,6 +1,7 @@
 Imported:
 gzip
 json
+ast
 PySimpleGUI
 openai
 os
@@ -80,5 +81,12 @@ If we applied this program to synthasizing citizen complaints/feedback, or reall
 Might be the case that we will need to further define for the AI what we classify as 'important' when it reads through the feedback data. Probably would need to even be updated over time too therotically.
 
 
-
+02/05/2024
 right now the pagination is super simple 'cause it works i guess' janky set up. Every time you paginate it will re search through the whole files but it knows to skip the firs x results it finds. It would be better to find all the results first, then smoothly paginate through those results. Or even better actually make and interface a real database for the searches rather than just looping through a simple python list. But this works with the files size I'm using so for now it's good enough.
+
+02/18/2024
+There is a question on how to display the reviews while optimizing what text is sent to the gpt so as to not waste tokens and also to not confuse it. Additionally it would be better to be able to see the reviews and their summary at the same time to compare, so I'll need to add a window for both. As for what reviews get shown and how many, its best to limit them based on # of characters specifically in their text field.
+Todo: add that second window
+	add a pgination for the reviews of each company, similar to meta data search pagination
+	add a toggle to only display the review text and not the extra data
+	add a toggle to see reviews with no text?
