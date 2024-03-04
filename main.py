@@ -17,13 +17,20 @@ import re
 reviewDataFilePath = "review-Missouri.json.gz"
 metaDataFilePath = "meta-Missouri.json.gz"
 
+#list of the available LLM models to use. Put the exact model name here to be passed to the api call.
+modelList = ['gpt-3.5-turbo-0125', 'gpt-4-0125-preview']
+#as of 3/4/2024 
+#gpt-4-0125-preview has 128k context, returns 4096
+#gpt-3.5-turbo-0125 has 16,385 tokens reuturns a max of 4096
+
 #list of keys in each json entry, change this if you have different keys
 metaKeyList = ["name", "address", "gmap_id", "description", "latitude", "longitude", "category", "avg_rating", "num_of_reviews", "price", "hours", "MISC", "state", "relative_results", "url"]
+
 
 #limit on the number of meta search results displayed at one time
 resultLimit = 20
 #limit the number of total chracters returned from the reviews 
-#since there is a token limit on what can be sent to the gpt model
+#since there is a token limit on what can be sent to the LLM models. For now manually change this as needed.
 reviewCharLimit = 8192
 
 
@@ -145,7 +152,7 @@ def getReviewData(path, specific_gmap_id, reviewsToSkip=0):
 
 
 #testing some openAI API function calls   
-def askGPT(reviewData, titleText):
+def askLLM(reviewData, titleText, modelChoice="gpt-3.5-turbo-1106"):
     
     client = OpenAI()
     
@@ -155,6 +162,9 @@ def askGPT(reviewData, titleText):
     testUI = True
     completion = ''
     completionText = ''
+    print("modelChoice type: ", type(modelChoice))
+    print("modelChoice: ", modelChoice)
+    
     
     #instructions given to gpt 
     systemInstructions = "Read the provided reviews. List as bullet points, Then list the issues that would be the highest priority to investigate and fix, and finally provide what the average person would rate the entity on a scale of 1-5 given the reviews. We have to determine what the most common complaints and praises are in these reviews. What information should the average person take from these reviews that they could responsibly share with others without giving a warped view? Lets work this out step by step"
@@ -162,14 +172,14 @@ def askGPT(reviewData, titleText):
     
     #don't call api if testing UI
     if testUI:   
-        #output exactly what would be sent to gpt
-        completionText = reviewData
+        #output which model is being used and exactly what would be sent to it 
+        completionText = "Model Chosen: " + modelChoice + '\nText That sent to LLM:\n\n' + reviewData
         
     else:
         #consider messing with temperature:  number(between 0 and 1.)   Optional Defaults to 0 
         #"If set to 0, the model will use log probability to automatically increase the temperature until certain thresholds are hit."
         completion = client.chat.completions.create(
-          model="gpt-3.5-turbo-1106",
+          model=modelChoice,
           messages=[
             {"role": "system", "content": systemInstructions},
             {"role": "user", "content": reviewData}
@@ -209,7 +219,7 @@ def main():
         [
             # Search bar, search key dropdown, and buttons on the left side
             sg.Column([
-                [sg.Text('Search: '), sg.InputText(key='search_bar', focus=True), sg.Combo(metaKeyList, default_value=metaKeyList[0], key='search_key', enable_events=True)],
+                [sg.Text('Search: '), sg.InputText(key='search_bar', focus=True), sg.Combo(metaKeyList, default_value=metaKeyList[0], key='search_key', enable_events=True, readonly=True)],
                 [sg.Text('Meta Data Search Results:')],
                 [sg.Listbox(values=[], size=(30, 19), key='list_box_search_results', enable_events=True), sg.Multiline(size=(40, 20), disabled=True, key='search_results')],
                 [sg.Button('Prev', key='Prev'), sg.Button('Next', key='Next'), sg.Text('Page Num: ', key='meta_page_num'), sg.VerticalSeparator(), sg.Button('Clear'), sg.Button('Search'), sg.VerticalSeparator(), sg.Text('Results: 0', key='meta_search_num')]
@@ -219,9 +229,11 @@ def main():
                 [sg.Text('', size=(10,28))]
              ]),
              
+            #LLM model selection, company reviews, LLM summarry, and right side buttons
             sg.Column([
                 #few blank lines for visual spacing
-                [sg.Text('')],
+                [sg.Text('', size=(31,1)), sg.Text('LLM Model to Use:'), 
+                sg.Combo(modelList, default_value=modelList[0], key='model_choice', enable_events=True, readonly=True)],
                 [sg.Text('Review Data:', key='review_data_title', size=(reviewTitleLength,1)), sg.Text('Review Summary:', key='summary_title', size=(reviewTitleLength,1))],
                 [sg.Multiline(size=(50, 20), disabled=True, key='review_results'), sg.Multiline(size=(40, 20), disabled=True, key='data_summary')],
                 [sg.Button('Prev', key='prev_review'), sg.Button('Next', key='next_review'), 
@@ -516,7 +528,9 @@ def main():
                 titleText = window['review_data_title'].get()
                 titleText = titleText.replace('Reviews', 'Summary')
                 
-                summaryResults = askGPT(reviewText, titleText)
+                #get which model the user chose to send the review data to
+                modelChoice = values['model_choice']
+                summaryResults = askLLM(reviewText, titleText, modelChoice)
                 
                 
                 #change title now

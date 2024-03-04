@@ -56,6 +56,8 @@ Files:
 main has all the code
 in main you'll need to put the filepath to your data. I used a .gz file so you'll need to use that or modify the code. Not providing the data directy, but link is above
 ReadME is this
+The program will also create 2 new fiels to save the gpt summary out put. 
+It will append each new result to the end of the file since it costs money to test it I wanted to save the results to compare.
 
 
 gui guide:
@@ -90,3 +92,12 @@ Todo: add that second window
 	add a pgination for the reviews of each company, similar to meta data search pagination
 	add a toggle to only display the review text and not the extra data
 	add a toggle to see reviews with no text?
+	add a way to change the token limit to the UI?
+
+
+3/4/2024
+There has been a few new developments with other LLM models that have significantly more context length. Google's Gemeni can apparently use over a million tokens and remain accurate in recolection of the data. I want to test how this might effect the model's ability to summarize and synthasize accurately, which means I need to add support for other models into my code.
+
+Also apparently for gpt there is a token calculator I can use instead of relying on char count:
+https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken
+Not sure if other models have this, but I could always just default to char limit if there is no token caclulator to use.
