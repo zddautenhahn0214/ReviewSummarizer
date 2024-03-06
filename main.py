@@ -212,6 +212,8 @@ def main():
     #layout vairables
     #vairable to change summzry data title length, if want to change later since it gets used for some math
     reviewTitleLength = 46
+    #var to limit the number of digits possible in the token_limit field
+    tokenLimitSize = 12
     # Define the layout of the window
     layout = [
         # Menu bar at the top
@@ -232,15 +234,18 @@ def main():
             #LLM model selection, company reviews, LLM summarry, and right side buttons
             sg.Column([
                 #few blank lines for visual spacing
-                [sg.Text('', size=(31,1)), sg.Text('LLM Model to Use:'), 
+                [sg.Text('', size=(36,1)), sg.Text('LLM Model:'), 
                 sg.Combo(modelList, default_value=modelList[0], key='model_choice', enable_events=True, readonly=True)],
                 [sg.Text('Review Data:', key='review_data_title', size=(reviewTitleLength,1)), sg.Text('Review Summary:', key='summary_title', size=(reviewTitleLength,1))],
                 [sg.Multiline(size=(50, 20), disabled=True, key='review_results'), sg.Multiline(size=(40, 20), disabled=True, key='data_summary')],
                 [sg.Button('Prev', key='prev_review'), sg.Button('Next', key='next_review'), 
                     sg.Text('', size=(5,1)),
                     sg.Button('Get Reviews', key='get_reviews'), 
-                    sg.Text('', size=(28,1)),
-                    sg.Button('Summarize', key='Summarize')],
+                    sg.Text('', size=(17,1)),
+                    sg.Button('Summarize', key='Summarize'),
+                    sg.Text('', size=(1,1)),
+                    sg.Text('Token Limit: '), 
+                    sg.InputText(key='token_limit', size=(tokenLimitSize,1), default_text=str(reviewCharLimit), enable_events=True)],
                 [sg.Text('Total Reviews: 0', key='total_review_num'), sg.VerticalSeparator(), 
                     sg.Text('Results: 0', key='review_results_num'), sg.VerticalSeparator(),
                     sg.Text('Text Char Count: 0', key='review_char_num')]
@@ -292,6 +297,17 @@ def main():
             
         elif event == 'search_key':
             pass
+            
+        #validate input so only integers can be enterd
+        elif event == 'token_limit' and values['token_limit']:
+            try:
+                in_as_int = int(values['token_limit'])
+            except:
+                if not (len(values['token_limit']) == 1 and values['token_limit'][0] == '-'):
+                    window['token_limit'].update(values['token_limit'][:-1])
+            if len(values['token_limit']) > tokenLimitSize:
+                window['token_limit'].update(values['token_limit'][:-1])
+            
         
         elif event == 'Clear':
             # Clear and reset vairable and UI fields 
