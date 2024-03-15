@@ -157,13 +157,12 @@ def askLLM(reviewData, titleText, modelChoice="gpt-3.5-turbo-1106"):
     client = OpenAI()
     
     # reviewData = ""
-    #this is a bool toggle for letting me test the UI without needing to constanttly spend money calling the GPT API
+    #this is a bool toggle for letting me test the UI without needing to constantly spend money calling the GPT API
     #True False
     testUI = True
     completion = ''
     completionText = ''
-    print("modelChoice type: ", type(modelChoice))
-    print("modelChoice: ", modelChoice)
+    titleText = titleText + " using model " + modelChoice + '\n'
     
     
     #instructions given to gpt 
@@ -213,7 +212,7 @@ def main():
     #vairable to change summzry data title length, if want to change later since it gets used for some math
     reviewTitleLength = 46
     #var to limit the number of digits possible in the token_limit field
-    tokenLimitSize = 12
+    tokenLimitInputSize = 12
     # Define the layout of the window
     layout = [
         # Menu bar at the top
@@ -235,7 +234,8 @@ def main():
             sg.Column([
                 #few blank lines for visual spacing
                 [sg.Text('', size=(36,1)), sg.Text('LLM Model:'), 
-                sg.Combo(modelList, default_value=modelList[0], key='model_choice', enable_events=True, readonly=True)],
+                sg.Combo(modelList, default_value=modelList[0], key='model_choice', enable_events=True, readonly=True),
+                sg.Button('Default Token Limit', key='default_token')],
                 [sg.Text('Review Data:', key='review_data_title', size=(reviewTitleLength,1)), sg.Text('Review Summary:', key='summary_title', size=(reviewTitleLength,1))],
                 [sg.Multiline(size=(50, 20), disabled=True, key='review_results'), sg.Multiline(size=(40, 20), disabled=True, key='data_summary')],
                 [sg.Button('Prev', key='prev_review'), sg.Button('Next', key='next_review'), 
@@ -245,7 +245,7 @@ def main():
                     sg.Button('Summarize', key='Summarize'),
                     sg.Text('', size=(1,1)),
                     sg.Text('Token Limit: '), 
-                    sg.InputText(key='token_limit', size=(tokenLimitSize,1), default_text=str(reviewCharLimit), enable_events=True)],
+                    sg.InputText(key='token_limit', size=(tokenLimitInputSize,1), default_text=str(reviewCharLimit), enable_events=True)],
                 [sg.Text('Total Reviews: 0', key='total_review_num'), sg.VerticalSeparator(), 
                     sg.Text('Results: 0', key='review_results_num'), sg.VerticalSeparator(),
                     sg.Text('Text Char Count: 0', key='review_char_num')]
@@ -274,39 +274,6 @@ def main():
         if event == sg.WIN_CLOSED or event == 'Exit':
             break
         
-        #left most list box with search results. Can click on each result to get more detail
-        elif event == 'list_box_search_results':
-            #do nothing if no results
-            if values['list_box_search_results']:
-                selected_item = values['list_box_search_results'][0]  # Get the first item selected.
-                window['search_results'].update(selected_item)
-                
-                #reformat data for display purposes
-                resultText = ""
-                for i in selected_item:
-                    resultText = resultText + str(i) + ': ' + str(selected_item[i]) + '\n\n'
-                #display results to correct window
-                if resultText:
-                    window['search_results'].update(resultText)
-                else:
-                    window['search_results'].update("No results found")
-                            
-            
-            
-
-            
-        elif event == 'search_key':
-            pass
-            
-        #validate input so only integers can be enterd
-        elif event == 'token_limit' and values['token_limit']:
-            try:
-                in_as_int = int(values['token_limit'])
-            except:
-                if not (len(values['token_limit']) == 1 and values['token_limit'][0] == '-'):
-                    window['token_limit'].update(values['token_limit'][:-1])
-            if len(values['token_limit']) > tokenLimitSize:
-                window['token_limit'].update(values['token_limit'][:-1])
             
         
         elif event == 'Clear':
@@ -328,6 +295,51 @@ def main():
             window['search_bar'].set_focus()      # Set focus back to the search bar
             window['review_char_num'].update("Text Char Count: 0")
             
+            #reset LLM selected to default or reset token to selected default
+            window['token_limit'].update(str(reviewCharLimit)) #reset token limit to defualt
+           
+           
+        #left most list box with search results. Can click on each result to get more detail
+        elif event == 'list_box_search_results':
+            #do nothing if no results
+            if values['list_box_search_results']:
+                selected_item = values['list_box_search_results'][0]  # Get the first item selected.
+                window['search_results'].update(selected_item)
+                
+                #reformat data for display purposes
+                resultText = ""
+                for i in selected_item:
+                    resultText = resultText + str(i) + ': ' + str(selected_item[i]) + '\n\n'
+                #display results to correct window
+                if resultText:
+                    window['search_results'].update(resultText)
+                else:
+                    window['search_results'].update("No results found")
+                            
+            
+        #set the token limit field to the default for the currently selected LLM model   
+        elif event == 'default_token':
+            #get currently selected LLM model
+            currentModel = values['model_choice']
+            print(currentModel)
+            window['token_limit'].update(str(reviewCharLimit))
+
+            
+        elif event == 'search_key':
+            pass
+            
+        #validate input so only integers can be enterd
+        elif event == 'token_limit' and values['token_limit']:
+            #test entire string in input field and test if it can be converted to int without error
+            try:
+                in_as_int = int(values['token_limit'])
+            #if there is an error then the char was a non int, so remove it from field
+            except:
+                if not (len(values['token_limit']) == 1 and values['token_limit'][0] == ''):
+                    window['token_limit'].update(values['token_limit'][:-1])
+            #if char would exceed the character limit size or if it is a spcae char, then remove it.
+            if len(values['token_limit']) > tokenLimitInputSize or  values['token_limit'][-1]==' ':
+                window['token_limit'].update(values['token_limit'][:-1])
    
         #define function for Search button, searching meta data
         elif event == 'Search':
